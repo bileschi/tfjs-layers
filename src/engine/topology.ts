@@ -759,12 +759,16 @@ export class Layer {
   /**
    * Builds or executes a `Layer's logic.
    *
-   * When called with `Tensor`(s), execute the `Layer`s computation and
-   * return Tensor(s).
-   *
-   * When called with `SymbolicTensor`(s), this will prepare the layer for
-   * future execution.  This entails internal book-keeping on shapes of
-   * expected Tensors, wiring layers together, and initializing weights.
+   * If a `SymbolicTensor` is passed:
+   *   - We call this.addInboundNode().
+   *   - If necessary, we `build` the layer to match
+   *       the shape of the input(s).
+   *   - We update the shape of every input tensor with
+   *       its new shape (obtained via self.computeOutputShape).
+   *       This is done as part of addInboundNode().
+   *   - We update the history of the output tensor(s)
+   *       with the current layer.
+   *       This is done as part of addInboundNode().
    *
    * @param inputs a `Tensor` or `SymbolicTensor` or an Array of them.
    * @param kwargs Additional keyword arguments to be passed to `call()`.
