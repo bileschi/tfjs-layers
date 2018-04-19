@@ -13,8 +13,7 @@
  */
 
 // tslint:disable:max-line-length
-import {Scalar, scalar, SGDOptimizer, Tensor, tensor1d, tensor2d, tensor3d, zeros} from '@tensorflow/tfjs-core';
-import * as _ from 'underscore';
+import {abs, mean, Scalar, scalar, SGDOptimizer, Tensor, tensor1d, tensor2d, tensor3d, test_util, zeros} from '@tensorflow/tfjs-core';
 
 import * as K from '../backend/tfjs_backend';
 import {CustomCallback, CustomCallbackConfig, Logs} from '../callbacks';
@@ -24,7 +23,7 @@ import {SimpleRNN} from '../layers/recurrent';
 import {TimeDistributed} from '../layers/wrappers';
 import {Regularizer} from '../regularizers';
 import {DType, SymbolicTensor} from '../types';
-import {pyListRepeat} from '../utils/generic_utils';
+import {pyListRepeat, stringsEqual} from '../utils/generic_utils';
 import {describeMathCPU, describeMathCPUAndGPU, expectTensorsClose} from '../utils/test_utils';
 
 import {Input, Layer} from './topology';
@@ -168,6 +167,12 @@ describeMathCPUAndGPU('sliceArraysByIndices', () => {
   });
   it('null array input', () => {
     expect(sliceArraysByIndices(null, tensor1d([0, 2]))).toBeNull();
+  });
+  it('casts indices automatically', () => {
+    const x = tensor2d([[1, 2], [3, 4], [5, 6]], [3, 2]);
+    const y =
+        sliceArraysByIndices(x, tensor1d([0.1, 2.0], 'float32')) as Tensor;
+    expectTensorsClose(y, tensor2d([[1, 2], [5, 6]], [2, 2]));
   });
 });
 
@@ -406,6 +411,54 @@ describeMathCPUAndGPU('Model.fit', () => {
              done.fail(err.stack);
            });
      });
+
+  it('training with custom loss', async done => {
+    // Use the following Python code snippet to get reference values
+    // for assertion:
+    //
+    // ```python
+    // import keras
+    // import keras.backend as K;
+    // import numpy as np
+    //
+    // def abs_diff_loss(x, y):
+    //   return K.mean(K.abs(x - y))
+    //
+    // input1 = keras.Input(shape=[4])
+    // layer = keras.layers.Dense(
+    //     units=1, use_bias=False, kernel_initializer='ones')
+    // output = layer(input1)
+    // model = keras.Model(input1, output)
+    // model.compile(optimizer='SGD', loss=abs_diff_loss)
+    // inputs = np.ones([5, 4])
+    // targets = np.ones([5])
+    // history = model.fit(
+    //     inputs, targets, batch_size=5, epochs=2,
+    //     validation_split=0.2)
+    // print(history.history)
+    // ```
+
+    createDenseModelAndData();
+
+    const absDiffLoss = (x: Tensor, y: Tensor) => mean(abs(x.sub(y)));
+
+    model.compile({optimizer: 'SGD', loss: absDiffLoss});
+    // Use batchSize === numSamples to get exactly one batch.
+    model
+        .fit(
+            inputs, targets,
+            {batchSize: numSamples, epochs: 2, validationSplit: 0.2})
+        .then(history => {
+          test_util.expectArraysClose(
+              history.history['loss'] as number[], [3, 2.96]);
+          test_util.expectArraysClose(
+              history.history['val_loss'] as number[], [2.96, 2.92]);
+          done();
+        })
+        .catch(err => {
+          done.fail(err.stack);
+        });
+  });
 
   it('Using only x and y input arguments', async done => {
     createDenseModelAndData();
@@ -647,9 +700,10 @@ describeMathCPUAndGPU('Model.fit', () => {
       createDenseCategoricalModelAndData();
       model.compile(
           {optimizer: 'SGD', loss: 'categoricalCrossentropy', metrics});
-      if (_.isEqual(metrics, ['acc']) || _.isEqual(metrics, ['accuracy'])) {
+      if (stringsEqual(metrics, ['acc']) ||
+          stringsEqual(metrics, ['accuracy'])) {
         expect(model.metricsNames).toEqual(['loss', 'acc']);
-      } else if (_.isEqual(metrics, ['acc', 'accuracy'])) {
+      } else if (stringsEqual(metrics, ['acc', 'accuracy'])) {
         expect(model.metricsNames).toEqual(['loss', 'acc', 'acc']);
       }
       model

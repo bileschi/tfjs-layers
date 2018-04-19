@@ -12,8 +12,7 @@
  * TensorFlow.js Layers: Recurrent Neural Network Layers.
  */
 
-import {doc, Tensor} from '@tensorflow/tfjs-core';
-import * as _ from 'underscore';
+import {doc, Tensor, util} from '@tensorflow/tfjs-core';
 
 // tslint:disable:max-line-length
 import {ActivationFn, ActivationIdentifier, getActivation, serializeActivation} from '../activations';
@@ -230,7 +229,7 @@ export class RNN extends Layer {
     if (this.states == null) {
       const numStates =
           Array.isArray(this.cell.stateSize) ? this.cell.stateSize.length : 1;
-      return _.range(numStates).map(x => null);
+      return math_utils.range(0, numStates).map(x => null);
     } else {
       return this.states;
     }
@@ -314,7 +313,7 @@ export class RNN extends Layer {
     }
 
     if (this.stateSpec != null) {
-      if (!_.isEqual(
+      if (!util.arraysEqual(
               this.stateSpec.map(spec => spec.shape[spec.shape.length - 1]),
               stateSize)) {
         throw new ValueError(
@@ -379,7 +378,7 @@ export class RNN extends Layer {
             this.cell.stateSize[index] :
             this.cell.stateSize;
         const expectedShape = [batchSize, dim];
-        if (!_.isEqual(value.shape, expectedShape)) {
+        if (!util.arraysEqual(value.shape, expectedShape)) {
           throw new ValueError(
               `State ${index} is incompatible with layer ${this.name}: ` +
               `expected shape=${expectedShape}, received shape=${value.shape}`);
@@ -750,7 +749,7 @@ export interface SimpleRNNCellLayerConfig extends LayerConfig {
  * const input = tf.input({shape: [10]});
  * const output = cell.apply(input);
  *
- * console.log(output.shape);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10]: This is the cell's output at a single time step. The 1st
  * // dimension is the unknown batch size.
  * ```
@@ -771,7 +770,7 @@ export interface SimpleRNNCellLayerConfig extends LayerConfig {
  * const input = tf.input({shape: [10, 20]});
  * const output = rnn.apply(input);
  *
- * console.log(output);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10, 8]: 1st dimension is unknown batch size; 2nd dimension is the
  * // same as the sequence length of `input`, due to `returnSequences`: `true`;
  * // 3rd dimension is the last `SimpleRNNCell`'s number of units.
@@ -1024,7 +1023,7 @@ export interface SimpleRNNLayerConfig extends BaseRNNLayerConfig {
  * const input = tf.input({shape: [10, 20]});
  * const output = rnn.apply(input);
  *
- * console.log(output);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10, 8]: 1st dimension is unknown batch size; 2nd dimension is the
  * // same as the sequence length of `input`, due to `returnSequences`: `true`;
  * // 3rd dimension is the `SimpleRNNCell`'s number of units.
@@ -1168,7 +1167,7 @@ export interface GRUCellLayerConfig extends SimpleRNNCellLayerConfig {
  * const input = tf.input({shape: [10]});
  * const output = cell.apply(input);
  *
- * console.log(output.shape);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10]: This is the cell's output at a single time step. The 1st
  * // dimension is the unknown batch size.
  * ```
@@ -1189,7 +1188,7 @@ export interface GRUCellLayerConfig extends SimpleRNNCellLayerConfig {
  * const input = tf.input({shape: [10, 20]});
  * const output = rnn.apply(input);
  *
- * console.log(output);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10, 8]: 1st dimension is unknown batch size; 2nd dimension is the
  * // same as the sequence length of `input`, due to `returnSequences`: `true`;
  * // 3rd dimension is the last `gruCell`'s number of units.
@@ -1449,7 +1448,7 @@ export interface GRULayerConfig extends SimpleRNNLayerConfig {
  * const input = tf.input({shape: [10, 20]});
  * const output = rnn.apply(input);
  *
- * console.log(output);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10, 8]: 1st dimension is unknown batch size; 2nd dimension is the
  * // same as the sequence length of `input`, due to `returnSequences`: `true`;
  * // 3rd dimension is the `GRUCell`'s number of units.
@@ -1617,7 +1616,7 @@ export interface LSTMCellLayerConfig extends SimpleRNNCellLayerConfig {
  * const input = tf.input({shape: [10]});
  * const output = cell.apply(input);
  *
- * console.log(output.shape);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10]: This is the cell's output at a single time step. The 1st
  * // dimension is the unknown batch size.
  * ```
@@ -1638,7 +1637,7 @@ export interface LSTMCellLayerConfig extends SimpleRNNCellLayerConfig {
  * const input = tf.input({shape: [10, 20]});
  * const output = rnn.apply(input);
  *
- * console.log(output);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10, 8]: 1st dimension is unknown batch size; 2nd dimension is the
  * // same as the sequence length of `input`, due to `returnSequences`: `true`;
  * // 3rd dimension is the last `lstmCell`'s number of units.
@@ -1930,9 +1929,9 @@ export interface LSTMLayerConfig extends SimpleRNNLayerConfig {
  *
  * // Create an input with 10 time steps.
  * const input = tf.input({shape: [10, 20]});
- * const output = rnn.apply(input);
+ * const output = lstm.apply(input);
  *
- * console.log(output);
+ * console.log(JSON.stringify(output.shape));
  * // [null, 10, 8]: 1st dimension is unknown batch size; 2nd dimension is the
  * // same as the sequence length of `input`, due to `returnSequences`: `true`;
  * // 3rd dimension is the `LSTMCell`'s number of units.

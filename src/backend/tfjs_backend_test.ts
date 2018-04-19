@@ -13,16 +13,17 @@
  */
 
 // tslint:disable:max-line-length
-import {Scalar, scalar, Tensor, tensor1d, tensor2d, tensor3d, tensor4d, Tensor4D, zeros} from '@tensorflow/tfjs-core';
-import * as _ from 'underscore';
+import {Scalar, scalar, slice, Tensor, tensor1d, tensor2d, tensor3d, tensor4d, Tensor4D, zeros} from '@tensorflow/tfjs-core';
 
 import {DataFormat, PaddingMode, PoolMode} from '../common';
 import {ConcreteTensor, DType, LayerVariable, SymbolicTensor} from '../types';
+import {unique} from '../utils/generic_utils';
+import {range} from '../utils/math_utils';
 import {describeMathCPU, describeMathCPUAndGPU, expectTensorsClose} from '../utils/test_utils';
 
 import * as K from './tfjs_backend';
 
-// tslint:enable
+// tslint:enable:max-line-length
 
 const CT = ConcreteTensor;
 
@@ -392,6 +393,58 @@ describeMathCPUAndGPU('squeeze', () => {
     const x = tensor2d([[10, 20, 30]]);
     const y = tensor1d([10, 20, 30]);
     expectTensorsClose(K.squeeze(x, 0), y);
+  });
+});
+
+describeMathCPUAndGPU('temporalPadding', () => {
+  it('default padding 1-1', () => {
+    const x = tensor3d([[[1, 2], [3, 4]], [[-1, -2], [-3, -4]]]);
+    const y = K.temporalPadding(x);
+    expectTensorsClose(y, tensor3d([
+                         [[0, 0], [1, 2], [3, 4], [0, 0]],
+                         [[0, 0], [-1, -2], [-3, -4], [0, 0]]
+                       ]));
+  });
+  it('custom padding 2-2', () => {
+    const x = tensor3d([[[1, 2], [3, 4]], [[-1, -2], [-3, -4]]]);
+    const y = K.temporalPadding(x, [2, 2]);
+    expectTensorsClose(
+        y, tensor3d([
+          [[0, 0], [0, 0], [1, 2], [3, 4], [0, 0], [0, 0]],
+          [[0, 0], [0, 0], [-1, -2], [-3, -4], [0, 0], [0, 0]]
+        ]));
+  });
+});
+
+describeMathCPUAndGPU('spatial2dPadding', () => {
+  it('default padding 1-1-1-1', () => {
+    const x = K.ones([2, 3, 4, 3]);
+    const y = K.spatial2dPadding(x);
+
+    expect(y.shape).toEqual([2, 5, 6, 3]);
+    expectTensorsClose(slice(y, [0, 1, 1, 0], [2, 3, 4, 3]), x);
+    expectTensorsClose(
+        slice(y, [0, 0, 0, 0], [2, 1, 6, 3]), K.zeros([2, 1, 6, 3]));
+    expectTensorsClose(
+        slice(y, [0, 4, 0, 0], [2, 1, 6, 3]), K.zeros([2, 1, 6, 3]));
+    expectTensorsClose(
+        slice(y, [0, 0, 0, 0], [2, 5, 1, 3]), K.zeros([2, 5, 1, 3]));
+    expectTensorsClose(
+        slice(y, [0, 0, 5, 0], [2, 5, 1, 3]), K.zeros([2, 5, 1, 3]));
+  });
+
+  it('custom padding 2-2-3-0', () => {
+    const x = K.ones([2, 3, 4, 3]);
+    const y = K.spatial2dPadding(x, [[2, 2], [3, 0]]);
+    expect(y.shape).toEqual([2, 7, 7, 3]);
+
+    expectTensorsClose(slice(y, [0, 2, 3, 0], [2, 3, 4, 3]), x);
+    expectTensorsClose(
+        slice(y, [0, 0, 0, 0], [2, 2, 7, 3]), K.zeros([2, 2, 7, 3]));
+    expectTensorsClose(
+        slice(y, [0, 5, 0, 0], [2, 2, 7, 3]), K.zeros([2, 2, 7, 3]));
+    expectTensorsClose(
+        slice(y, [0, 0, 0, 0], [2, 7, 3, 3]), K.zeros([2, 7, 3, 3]));
   });
 });
 
@@ -1010,7 +1063,7 @@ describeMathCPUAndGPU('scalarTimesArray', () => {
     const y = K.scalarTimesArray(scalar(-2), K.ones([2, 2, 2, 2]));
     expect(y.shape).toEqual([2, 2, 2, 2]);
     const yValues = Array.from(y.dataSync());
-    expect(_.uniq(yValues)).toEqual([-2]);
+    expect(unique(yValues)).toEqual([-2]);
   });
 });
 
@@ -1815,7 +1868,7 @@ describeMathCPUAndGPU('dropout', () => {
   const dropoutLevels = [0, 0.75];
   for (const dropoutLevel of dropoutLevels) {
     it(`Level = ${dropoutLevel}`, () => {
-      const x = tensor2d(_.range(1, 21), [10, 2]);
+      const x = tensor2d(range(1, 21), [10, 2]);
       const y = K.dropout(x, scalar(dropoutLevel));
       expect(y.dtype).toEqual(x.dtype);
       expect(y.shape).toEqual(x.shape);
@@ -2261,8 +2314,8 @@ describeMathCPUAndGPU('pool2d', () => {
             if (stride === 1) {
               yExpected = tensor4d(
                   [[[
-                    [25, 45, 65, 37.5], [5, 5, 5, 2.5], [-25, -45, -65, -37.5],
-                    [-15, -25, -35, -20]
+                    [25, 45, 65, 75], [5, 5, 5, 5], [-25, -45, -65, -75],
+                    [-30, -50, -70, -80]
                   ]]],
                   [1, 1, 4, 4]);
             } else {
@@ -2297,7 +2350,7 @@ describeMathCPUAndGPU('pool2d', () => {
       let yExpected = tensor4d(x4by4Data, [1, 1, 4, 4]);
       if (poolMode === 'avg') {
         yExpected = tensor4d(
-            [[[[0.75, 4.5, 3.75], [-0.25, -2, -1.75], [-0.5, -2.5, -2]]]],
+            [[[[0.75, 4.5, 7.5], [-0.25, -2, -3.5], [-1, -5, -8]]]],
             [1, 1, 3, 3]);
       } else {
         yExpected =

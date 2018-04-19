@@ -50,15 +50,24 @@ export async function modelFromJSON(
   const model = deserialize(tsConfig, customObjects) as Model;
 
   if (modelAndWeightsConfig.weightsManifest != null) {
+    // Load the weight values keyed by the original tensor names in the model
+    // file that was loaded.  These should match the keys of the weight
+    // manifest.
     const weightValues =
         await loadWeights(
             modelAndWeightsConfig.weightsManifest,
             modelAndWeightsConfig.pathPrefix,
-            model.weights.map(weight => weight.name)) as NamedTensorMap;
+            model.weights.map(weight => weight.originalName)) as NamedTensorMap;
+
+    // Map the weights to the unique tensor names generated during model loading
+    const uniqueWeightValues: NamedTensorMap = {};
+    for (const weight of model.weights) {
+      uniqueWeightValues[weight.name] = weightValues[weight.originalName];
+    }
 
     const skipMismatches: boolean = null;
     const isNamedTensorMap = true;
-    model.loadWeights(weightValues, skipMismatches, isNamedTensorMap);
+    model.loadWeights(uniqueWeightValues, skipMismatches, isNamedTensorMap);
   }
   return model;
 }
@@ -388,8 +397,8 @@ export class Sequential extends Model {
    */
   @doc({heading: 'Models', subheading: 'Classes', configParamIndices: [2]})
   evaluate(
-      x: Tensor|Tensor[], y: Tensor|Tensor[],
-      config: ModelEvaluateConfig = {}): Scalar|Scalar[] {
+      x: Tensor|Tensor[], y: Tensor|Tensor[], config: ModelEvaluateConfig = {}):
+      Scalar|Scalar[] {
     if (!this.built) {
       throw new RuntimeError(
           'The model needs to be compiled before being used.');
@@ -475,6 +484,8 @@ export class Sequential extends Model {
    *   batchSize: 4,
    *   epochs: 3
    * });
+   * console.log(history.history.loss);
+   * ```
    *
    * @param x `Tensor` of training data, or an array of `Tensor`s if the model
    *   has multiple inputs. If all inputs in the model are named, you can also
@@ -526,5 +537,24 @@ export class Sequential extends Model {
   }
 
   // TODO(cais): Override get trainableWeights() here
+
+  // tslint:disable-next-line:no-any
+  getConfig(): any {
+    // NOTE(cais): We override the return type of getConfig() to `any` here,
+    //   because the `Sequential` class is a special case among `Container`
+    //   subtypes in that its getConfig() method returns an Array (not a dict).
+    const config: ConfigDict[] = [];
+    for (const layer of this.layers) {
+      config.push({
+        // TODO(cais): the `constructor.name` call here, along with the same
+        //   call in other places, needs to be replaced with something more
+        //   robust against uglification.
+        //   See: https://github.com/tensorflow/tfjs/issues/191
+        className: layer.constructor.name,
+        config: layer.getConfig(),
+      });
+    }
+    return config;
+  }
 }
 generic_utils.ClassNameMap.register('Sequential', Sequential);

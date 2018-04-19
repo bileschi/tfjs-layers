@@ -14,8 +14,7 @@
 
 // tslint:disable:max-line-length
 import * as tfc from '@tensorflow/tfjs-core';
-import {onesLike as coreOnesLike, Scalar, scalar, Tensor, Tensor1D, tensor1d, Tensor2D, tensor2d, Tensor3D, Tensor4D, variableGrads, where, zerosLike as coreZerosLike} from '@tensorflow/tfjs-core';
-import * as _ from 'underscore';
+import {onesLike as coreOnesLike, Scalar, scalar, Tensor, Tensor1D, tensor1d, Tensor2D, tensor2d, Tensor3D, Tensor4D, util, variableGrads, where, zerosLike as coreZerosLike} from '@tensorflow/tfjs-core';
 
 import {checkDataFormat, checkPaddingMode, checkPoolMode, DataFormat, nameScope as commonNameScope, PaddingMode, PoolMode} from '../common';
 import {Constraint} from '../constraints';
@@ -36,7 +35,7 @@ let backend: 'cpu'|'webgl' = 'webgl';
 
 const DEFAULT_DTYPE = DType.float32;
 
-function disposeScalarCache() {
+export function disposeScalarCache() {
   for (const typeKey in scalarCache) {
     for (const key in scalarCache[typeKey]) {
       scalarCache[typeKey][key].dispose();
@@ -246,6 +245,82 @@ export function expandDims(x: Tensor, axis = -1): Tensor {
  */
 export function squeeze(x: Tensor, axis: number): Tensor {
   return tfc.squeeze(x, [axis]);
+}
+
+/**
+ * Pads the middle dimension of a 3D tensor.
+ *
+ * @param x Input `Tensor` to be padded.
+ * @param padding `Array` of 2 integers, how many zeros to add at the start and
+ *   end of the middle dimension (i.e., dimension 1).
+ * @return A padded 3D `Tensor`.
+ */
+export function temporalPadding(x: Tensor, padding?: [number, number]): Tensor {
+  if (ndim(x) !== 3) {
+    throw new ValueError(
+        `temporalPadding expects input tensor to be 3-D, but received a ` +
+        `${ndim(x)}-D tensor.`);
+  }
+
+  if (padding == null) {
+    padding = [1, 1];
+  }
+  if (padding.length !== 2) {
+    throw new ValueError(
+        `temporalPadding expects input padding pattern to be a length-2 ` +
+        `array, but received a length-${padding.length} array.`);
+  }
+
+  const pattern: Array<[number, number]> = [[0, 0], padding, [0, 0]];
+  return tfc.pad(x, pattern);
+}
+
+/**
+ * Pads the 2nd and 3rd dimensions of a 4D tensor.
+ *
+ * @param x Input `Tensor` to be padded.
+ * @param padding `Array` of two `Array`s, each of which is an `Array` of two
+ *   integers. The amount of padding at the beginning and end of the 2nd and 3rd
+ *   dimensions, respectively.
+ * @param dataFormat 'channelsLast' (default) or 'channelsFirst'.
+ * @return Padded 4D `Tensor`.
+ */
+export function spatial2dPadding(
+    x: Tensor, padding?: [[number, number], [number, number]],
+    dataFormat?: DataFormat): Tensor {
+  if (ndim(x) !== 4) {
+    throw new ValueError(
+        `temporalPadding expects input tensor to be 4-D, but received a ` +
+        `${ndim(x)}-D tensor.`);
+  }
+
+  if (padding == null) {
+    padding = [[1, 1], [1, 1]];
+  }
+  if (padding.length !== 2 || padding[0].length !== 2 ||
+      padding[1].length !== 2) {
+    throw new ValueError(
+        'spatial2dPadding expects `padding` to be an Array of two Arrays, ' +
+        'each of which is an Array of two integers.');
+  }
+
+  if (dataFormat == null) {
+    dataFormat = imageDataFormat();
+  }
+  if (dataFormat !== 'channelsLast' && dataFormat !== 'channelsFirst') {
+    throw new ValueError(
+        `Unknown data format: ${dataFormat}. ` +
+        `Supported data formats are 'channelsLast' and 'channelsFirst.`);
+  }
+
+  let pattern: Array<[number, number]>;
+  if (dataFormat === 'channelsFirst') {
+    pattern = [[0, 0], [0, 0], padding[0], padding[1]];
+  } else {
+    pattern = [[0, 0], padding[0], padding[1], [0, 0]];
+  }
+
+  return tfc.pad(x, pattern);
 }
 
 /**
@@ -958,7 +1033,8 @@ export function oneHot(indices: Tensor, numClasses: number): Tensor {
         'Only 1D one-hot tensors are supported in the ' +
         'deeplearn backend, at present.');
   }
-  return tfc.oneHot(indices as Tensor1D, numClasses);
+  indices = indices.toInt();
+  return tfc.oneHot(indices as Tensor1D, numClasses).toFloat();
 }
 
 /* Elementary math functions. */
@@ -999,7 +1075,9 @@ export function argmax(x: Tensor, axis = -1): Tensor {
 export function gather(
     reference: Tensor, indices: number[]|Tensor1D, axis?: number): Tensor {
   if (Array.isArray(indices)) {
-    indices = tensor1d(indices);
+    indices = tensor1d(indices, 'int32');
+  } else {
+    indices = indices.toInt();
   }
   return tfc.gather(reference, indices, axis);
 }
@@ -1259,17 +1337,68 @@ export function batchNormalization(
  */
 export function biasAdd(
     x: Tensor, bias: Tensor, dataFormat?: DataFormat): Tensor {
+  if (dataFormat == null) {
+    dataFormat = imageDataFormat();
+  }
   checkDataFormat(dataFormat);
+
   if (ndim(bias) !== 1 && ndim(bias) !== ndim(x)) {
     throw new ValueError(
         'Unexpected bias dimensions: ' + ndim(bias) +
         '; expected it to be 1 or ' + ndim(x));
   }
+  const biasShape = bias.shape;
 
-  if (dataFormat) {
-    throw new NotImplementedError('dataFormat logic is not yet implemented.');
+  let y: Tensor;
+  if (ndim(x) === 5) {
+    if (dataFormat === 'channelsFirst') {
+      if (biasShape.length === 1) {
+        y = x.add(bias.reshape([1, biasShape[0], 1, 1, 1]));
+      } else {
+        y = x.add(bias.reshape(
+            [1, biasShape[3], biasShape[0], biasShape[1], biasShape[2]]));
+      }
+    } else if (dataFormat === 'channelsLast') {
+      if (biasShape.length === 1) {
+        y = x.add(bias.reshape([1, 1, 1, 1, biasShape[0]]));
+      } else {
+        y = x.add(bias.reshape([1].concat(biasShape)));
+      }
+    }
+  } else if (ndim(x) === 4) {
+    if (dataFormat === 'channelsFirst') {
+      if (biasShape.length === 1) {
+        y = x.add(bias.reshape([1, biasShape[0], 1, 1]));
+      } else {
+        y = x.add(bias.reshape([1, biasShape[2], biasShape[0], biasShape[1]]));
+      }
+    } else if (dataFormat === 'channelsLast') {
+      if (biasShape.length === 1) {
+        y = x.add(bias.reshape([1, 1, 1, biasShape[0]]));
+      } else {
+        y = x.add(bias.reshape([1].concat(biasShape)));
+      }
+    }
+  } else if (ndim(x) === 3) {
+    if (dataFormat === 'channelsFirst') {
+      if (biasShape.length === 1) {
+        y = x.add(bias.reshape([1, biasShape[0], 1]));
+      } else {
+        y = x.add(bias.reshape([1, biasShape[1], biasShape[0]]));
+      }
+    } else if (dataFormat === 'channelsLast') {
+      if (biasShape.length === 1) {
+        y = x.add(bias.reshape([1, 1, biasShape[0]]));
+      } else {
+        y = x.add(bias.reshape([1].concat(biasShape)));
+      }
+    }
+  } else if (ndim(x) < 3) {
+    y = x.add(bias);
+  } else {
+    throw new ValueError(`Unsupported input rank by biasAdd: ${ndim(x)}`);
   }
-  return tfc.add(x, bias);
+  return y;
 }
 
 /**
@@ -1358,7 +1487,7 @@ export function dropout(
     x: Tensor, level: Scalar, noiseShape?: number[], seed?: number): Tensor {
   // TODO(cais): Switch to deeplearn.js implementation of dropout when it
   //   becomes avaialable.
-  if (noiseShape != null && !_.isEqual(x.shape, noiseShape)) {
+  if (noiseShape != null && !util.arraysEqual(x.shape, noiseShape)) {
     throw new NotImplementedError(
         'Non-default noise shape is not implemented yet: ' +
         JSON.stringify(noiseShape));
@@ -1425,11 +1554,6 @@ export function conv1dWithBias(
     dataFormat = imageDataFormat();
   }
   checkDataFormat(dataFormat);
-  if (dilationRate !== 1) {
-    throw new NotImplementedError(
-        `dilationRate = ${dilationRate} is not implemented for 1D ` +
-        `convolution yet.`);
-  }
 
   // Check the ranks of x, kernel and bias.
   if (x.shape.length !== 3) {
@@ -1460,7 +1584,7 @@ export function conv1dWithBias(
   }
   let y: Tensor = tfc.conv1d(
       x as Tensor2D | Tensor3D, kernel as Tensor3D, strides,
-      padding === 'same' ? 'same' : 'valid');
+      padding === 'same' ? 'same' : 'valid', 'NWC', dilationRate);
   if (bias != null) {
     y = biasAdd(y, bias);
   }
@@ -1518,10 +1642,6 @@ export function conv2dWithBias(
     dataFormat = imageDataFormat();
   }
   checkDataFormat(dataFormat);
-  if (dilationRate != null) {
-    throw new NotImplementedError(
-        'Support for non-default dilation rate is not implemented yet.');
-  }
   if (ndim(x) !== 3 && ndim(x) !== 4) {
     throw new ValueError(
         `conv2dWithBias expects input to be of rank 3 or 4, but received ` +
@@ -1540,7 +1660,7 @@ export function conv2dWithBias(
   }
   y = tfc.conv2d(
       y as Tensor3D | Tensor4D, kernel as Tensor4D, strides as [number, number],
-      padding === 'same' ? 'same' : 'valid');
+      padding === 'same' ? 'same' : 'valid', 'NHWC', dilationRate);
   if (bias != null) {
     y = biasAdd(y, bias as Tensor1D);
   }
@@ -1711,8 +1831,8 @@ export function categoricalCrossentropy(
     output = divide(output, outputSum);
   }
   output = clip(output, epsilon(), 1 - epsilon());
-  return tfc.neg(
-      tfc.sum(tfc.mul(target, tfc.log(output)), shape(output).length - 1));
+  return tfc.neg(tfc.sum(
+      tfc.mul(target.toFloat(), tfc.log(output)), shape(output).length - 1));
 }
 
 /**
@@ -1726,7 +1846,7 @@ export function categoricalCrossentropy(
  */
 export function sparseCategoricalCrossentropy(
     target: Tensor, output: Tensor, fromLogits = false): Tensor {
-  const flatTarget = tfc.floor(flatten(target)) as Tensor1D;
+  const flatTarget = tfc.floor(flatten(target)).toInt() as Tensor1D;
   const outputShape = shape(output);
   const oneHotTarget = reshape(
       tfc.oneHot(flatTarget, outputShape[outputShape.length - 1]), outputShape);
@@ -1872,7 +1992,7 @@ export function rnn(
 
   // Transpose to time-major, i.e., from [batch, time, ...] to [time, batch,
   // ...].
-  const axes = [1, 0].concat(_.range(2, ndim));
+  const axes = [1, 0].concat(math_utils.range(2, ndim));
   inputs = transpose(inputs, axes);
 
   if (mask != null) {
@@ -1931,7 +2051,9 @@ export function rnn(
 
   return [
     lastOutput,
-    transpose(outputs, [1, 0].concat(_.range(2, outputs.shape.length))), states
+    transpose(
+        outputs, [1, 0].concat(math_utils.range(2, outputs.shape.length))),
+    states
   ];
 }
 

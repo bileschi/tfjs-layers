@@ -10,16 +10,15 @@
 
 // tslint:disable:max-line-length
 import {scalar, Tensor, tensor1d, tensor2d, zeros} from '@tensorflow/tfjs-core';
-import * as _ from 'underscore';
-
 import * as K from '../backend/tfjs_backend';
 import * as tfl from '../index';
+import * as initializers from '../initializers';
 import {Reshape} from '../layers/core';
 import {DType, LayerVariable, NamedTensorMap, Shape, SymbolicTensor} from '../types';
 import {describeMathCPU, describeMathCPUAndGPU, expectTensorsClose} from '../utils/test_utils';
 
 import {execute, FeedDict} from './executor';
-import {Container, getSourceInputs, Input, InputLayer, InputSpec, Layer, loadWeightsFromJson, loadWeightsFromNamedTensorMap, Node} from './topology';
+import {Container, getSourceInputs, Input, InputLayer, InputSpec, Layer, LayerConfig, loadWeightsFromJson, loadWeightsFromNamedTensorMap, Node} from './topology';
 
 // tslint:enable
 
@@ -291,6 +290,22 @@ describeMathCPU('Layer', () => {
       const layer = new Layer({weights});
       expect(layer.initialWeights).toEqual(weights);
     });
+
+    it('Layer with duplicate weight names throws error', () => {
+      class LayerForTest extends Layer {
+        constructor(config: LayerConfig) {
+          super(config);
+          this.addWeight(
+              'foo', [1, 2], DType.float32,
+              initializers.getInitializer('zeros'));
+          this.addWeight(
+              'foo', [2, 3], DType.float32,
+              initializers.getInitializer('zeros'));
+        }
+      }
+      expect(() => new LayerForTest({}))
+          .toThrowError(/[Dd]uplicate weight name/);
+    });
   });
 
 
@@ -354,7 +369,7 @@ describeMathCPU('Layer', () => {
        });
   }
 
-  describeMathCPU('assertInputCompatibility()', () => {
+  describe('assertInputCompatibility()', () => {
     function runAssert(
         layer: Layer, inputs: Tensor|Tensor[]|SymbolicTensor|SymbolicTensor[]) {
       // tslint:disable-next-line:no-any
@@ -572,7 +587,7 @@ describeMathCPU('Layer', () => {
        expect(results.map(x => x.outputTensorIndex)).toEqual([0, 1]);
      });
 
-  describeMathCPUAndGPU('apply() passed 1+ Tensors', () => {
+  describe('apply() passed 1+ Tensors', () => {
     it('returns new values for output if the same as the input.', () => {
       const anArray = K.ones([1]);
       // Test with both an Tensor and an array of Tensors.
@@ -598,7 +613,7 @@ describeMathCPU('Layer', () => {
     });
   });
 
-  describeMathCPUAndGPU('initialized with weights at construction time', () => {
+  describe('initialized with weights at construction time', () => {
     it('sets those weights after calling apply().', () => {
       const initialWeights = K.eye(2);
       const arrayInput = K.zeros([1]);
@@ -1156,9 +1171,21 @@ describeMathCPUAndGPU('Container', () => {
 
     const container =
         new Container({inputs: [inputTensor], outputs: [output1, output2]});
-    const sortedLayers = _.sortBy(container.layers, x => x.name);
-    const expectedSortedLayers = _.sortBy(
-        [inputTensor.sourceLayer, layerA, layerB, layerC, layerX], x => x.name);
+
+    const compareFunction = (a: Layer, b: Layer) => {
+      if (a.name < b.name) {
+        return -1;
+      } else if (a.name > b.name) {
+        return 1;
+      } else {
+        return 0;
+      }
+    };
+    const sortedLayers = container.layers.slice().sort(compareFunction);
+    const expectedSortedLayers = [
+      inputTensor.sourceLayer, layerA, layerB, layerC, layerX
+    ].sort(compareFunction);
+
     expect(sortedLayers).toEqual(expectedSortedLayers);
   });
 

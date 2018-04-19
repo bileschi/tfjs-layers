@@ -12,8 +12,7 @@
  * Normalization layers.
  */
 
-import {Tensor} from '@tensorflow/tfjs-core';
-import * as _ from 'underscore';
+import {Tensor, util} from '@tensorflow/tfjs-core';
 
 // tslint:disable:max-line-length
 import * as K from '../backend/tfjs_backend';
@@ -25,6 +24,7 @@ import {getRegularizer, Regularizer, RegularizerIdentifier, serializeRegularizer
 import {Shape} from '../types';
 import {ConfigDict, LayerVariable} from '../types';
 import * as generic_utils from '../utils/generic_utils';
+import {range} from '../utils/math_utils';
 // tslint:enable:max-line-length
 
 export interface BatchNormalizationLayerConfig extends LayerConfig {
@@ -51,7 +51,7 @@ export interface BatchNormalizationLayerConfig extends LayerConfig {
   /**
    * If `true`, add offset of `beta` to normalized tensor.
    * If `false`, `beta` is ignored.
-   * Defaults to true.
+   * Defaults to `true`.
    */
   center?: boolean;
 
@@ -60,7 +60,7 @@ export interface BatchNormalizationLayerConfig extends LayerConfig {
    * If `false`, `gamma` is not used.
    * When the next layer is linear (also e.g. `nn.relu`),
    * this can be disabled since the scaling will be done by the next layer.
-   * Defaults to true.
+   * Defaults to `true`.
    */
   scale?: boolean;
 
@@ -205,7 +205,7 @@ export class BatchNormalization extends Layer {
     const input = generic_utils.getExactlyOneTensor(inputs);
     const inputShape = K.shape(input);
     const ndim = inputShape.length;
-    const reductionAxes = _.range(ndim);
+    const reductionAxes = range(0, ndim);
     const axis = this.axis >= 0 ? this.axis : (this.axis + ndim);
     reductionAxes.splice(axis, 1);
     const broadcastShape = generic_utils.pyListRepeat(1, ndim);
@@ -213,8 +213,8 @@ export class BatchNormalization extends Layer {
 
     const sortedReductionAxes = reductionAxes.slice();
     sortedReductionAxes.sort();
-    const needsBroadcasting =
-        !_.isEqual(sortedReductionAxes, _.range(ndim).slice(0, ndim - 1));
+    const needsBroadcasting = !util.arraysEqual(
+        sortedReductionAxes, range(0, ndim).slice(0, ndim - 1));
 
     const normalizeInference: () => Tensor = () => {
       if (needsBroadcasting) {
@@ -225,14 +225,15 @@ export class BatchNormalization extends Layer {
         const broadcastBeta =
             this.center ? K.reshape(this.beta.read(), broadcastShape) : null;
         const broadcastGamma =
-            this.center ? K.reshape(this.gamma.read(), broadcastShape) : null;
+            this.scale ? K.reshape(this.gamma.read(), broadcastShape) : null;
         return K.batchNormalization(
             input, broadcastMovingMean, broadcastMovingVariance, broadcastBeta,
             broadcastGamma, this.epsilon);
       } else {
         return K.batchNormalization(
             input, this.movingMean.read(), this.movingVariance.read(),
-            this.beta.read(), this.gamma.read(), this.epsilon);
+            this.beta == null ? null : this.beta.read(),
+            this.gamma == null ? null : this.gamma.read(), this.epsilon);
       }
     };
 

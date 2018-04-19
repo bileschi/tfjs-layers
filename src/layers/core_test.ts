@@ -14,13 +14,13 @@
 
 // tslint:disable:max-line-length
 import {scalar, Tensor, tensor2d, tensor3d, tensor4d} from '@tensorflow/tfjs-core';
-import * as _ from 'underscore';
 
 import {ActivationIdentifier} from '../activations';
 import * as K from '../backend/tfjs_backend';
 import {InitializerIdentifier} from '../initializers';
 import {DType} from '../types';
 import {SymbolicTensor} from '../types';
+import {pyListRepeat} from '../utils/generic_utils';
 import {arrayProd} from '../utils/math_utils';
 import {describeMathCPU, describeMathCPUAndGPU, expectTensorsClose} from '../utils/test_utils';
 
@@ -52,47 +52,49 @@ describe('Dropout Layer: Symbolic', () => {
   }
 });
 
-describeMathCPUAndGPU('Dropout Layer: Tensor', () => {
-  const inputShape = [2, 3, 4];
-  const trainingValues = [false, true];
-  const dropoutRates = [0, 0.5];
-  const noiseShapes = [null, inputShape];
-  // TODO(cais): test non-default noiseShapes once they are supported.
+describeMathCPUAndGPU('Dropout Layer', () => {
+  it('tensor', () => {
+    const inputShape = [2, 3, 4];
+    const trainingValues = [false, true];
+    const dropoutRates = [0, 0.5];
+    const noiseShapes = [null, inputShape];
+    // TODO(cais): test non-default noiseShapes once they are supported.
 
-  for (const training of trainingValues) {
-    for (const rate of dropoutRates) {
-      for (const noiseShape of noiseShapes) {
-        const testTitle = `training=${training}, dropoutRate=${rate}, ` +
-            `noiseShape=${JSON.stringify(noiseShape)}`;
-        it(testTitle, () => {
-          const x = K.ones(inputShape);
-          const dropoutLayer = new Dropout({rate, noiseShape});
-          const y = dropoutLayer.apply(x, {training}) as Tensor;
-          expect(x.dtype).toEqual(y.dtype);
-          expect(x.shape).toEqual(y.shape);
-          const xValue = x.dataSync();
-          const yValue = y.dataSync();
-          let nKept = 0;
-          for (let i = 0; i < xValue.length; ++i) {
-            if (yValue[i] !== 0) {
-              nKept++;
-              if (training) {
-                expect(yValue[i]).toBeCloseTo(1 / (1 - rate));
-              } else {
-                expect(yValue[i]).toBeCloseTo(1);
+    for (const training of trainingValues) {
+      for (const rate of dropoutRates) {
+        for (const noiseShape of noiseShapes) {
+          const testTitle = `training=${training}, dropoutRate=${rate}, ` +
+              `noiseShape=${JSON.stringify(noiseShape)}`;
+          it(testTitle, () => {
+            const x = K.ones(inputShape);
+            const dropoutLayer = new Dropout({rate, noiseShape});
+            const y = dropoutLayer.apply(x, {training}) as Tensor;
+            expect(x.dtype).toEqual(y.dtype);
+            expect(x.shape).toEqual(y.shape);
+            const xValue = x.dataSync();
+            const yValue = y.dataSync();
+            let nKept = 0;
+            for (let i = 0; i < xValue.length; ++i) {
+              if (yValue[i] !== 0) {
+                nKept++;
+                if (training) {
+                  expect(yValue[i]).toBeCloseTo(1 / (1 - rate));
+                } else {
+                  expect(yValue[i]).toBeCloseTo(1);
+                }
               }
             }
-          }
-          const numel = K.countParams(x);
-          if (rate === 0 || !training) {
-            expect(nKept).toEqual(numel);
-          } else {
-            expect(nKept).toBeLessThan(numel);
-          }
-        });
+            const numel = K.countParams(x);
+            if (rate === 0 || !training) {
+              expect(nKept).toEqual(numel);
+            } else {
+              expect(nKept).toBeLessThan(numel);
+            }
+          });
+        }
       }
     }
-  }
+  });
 });
 
 describeMathCPU('Dense Layer: Symbolic', () => {
@@ -234,8 +236,8 @@ describeMathCPUAndGPU('Dense Layer: Tensor', () => {
                let expectedOutput;
                if (K.ndim(input) === 2) {
                  expectedOutput = tensor2d(
-                     _.times(
-                         arrayProd(expectedShape), () => expectedElementValue),
+                     pyListRepeat(
+                         expectedElementValue, arrayProd(expectedShape)),
                      [expectedShape[0], expectedShape[1]]);
                }
                expectTensorsClose(
